@@ -1,7 +1,3 @@
-# CYD-Midicontroller-V2
-Extended version of the CYD Midi controller
-
-
 # CYD MIDI Controller V2
 
 Touchscreen Hardware serial , Bluetooth and Wifi MIDI controller for the ESP32-2432S028R "Cheap Yellow Display" (CYD).
@@ -14,7 +10,7 @@ Touchscreen Hardware serial , Bluetooth and Wifi MIDI controller for the ESP32-2
     - BLE2SERIAL on/off ( gateway between hardware serial and BLE MIDI)
     - MIDI THRU on/off
     - Drum note assignments and MIDI channel
-    - MIDI 2 CV assignments ( experimental, needs i2c and a MCP4728)
+    - MIDI 2 CV assignments ( experimental and needs i2c and a MCP4728)
     - WIFI settings for Apple MIDI or RTP MIDI ( experimental)
 
 ** MONITOR app : MIDI monitor
@@ -22,7 +18,8 @@ Touchscreen Hardware serial , Bluetooth and Wifi MIDI controller for the ESP32-2
 ** PGMCH app: Program change sender ( GM patch names )
 ** SLIDERS app: Control Change sliders ( mod,vol,pan,cutoff, reso, pitch) (1,7,10,74,71,pitchbend);
 
-** Files menu:
+** Files menu
+
    - Format SD card
    - Delete dot-files
    - USB XFER: Transfer files to and from the SD card by using the cyd_filetransfer.html webpage in Chrome
