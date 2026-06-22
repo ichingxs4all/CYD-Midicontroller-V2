@@ -1,8 +1,8 @@
 # CYD-Midicontroller-V2
 Extended version of the CYD Midi controller
 
+Forked from https://github.com/NickCulbertson/CYD-MIDI-Controller by Nick Culbertson
 
-# CYD MIDI Controller V2
 
 Touchscreen Hardware serial , Bluetooth and Wifi MIDI controller for the ESP32-2432S028R "Cheap Yellow Display" (CYD).
 
