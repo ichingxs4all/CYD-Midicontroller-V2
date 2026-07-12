@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CYD MIDI File Transfer</title>
+<!--
+  CYD MIDI Controller v2.9 — Web File Transfer
+  ─────────────────────────────────────────────
+  Uses the Web Serial API (Chrome ≥ 89, Edge ≥ 89).
+  Open this file with:  python3 -m http.server 8080
+  then visit:           http://localhost:8080/cyd_filetransfer.html
+
+  Or host it anywhere over HTTPS.
+  (Web Serial requires a Secure Context — file:// will NOT work.)
+
+  The CYD must be in FILES → USB XFER mode before connecting.
+  Baud rate: 115200  8N1
+-->
+<style>
+  :root {
+    --bg:      #0d1117;
+    --surface: #161b22;
+    --border:  #30363d;
+    --primary: #1f6feb;
+    --success: #3fb950;
+    --warning: #d29922;
+    --danger:  #da3633;
+    --text:    #c9d1d9;
+    --dim:     #8b949e;
+    --accent:  #58a6ff;
+    --font:    'Segoe UI', system-ui, sans-serif;
+    --mono:    'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Top bar ── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .topbar h1 { font-size: 1rem; font-weight: 600; color: var(--accent); flex: 1; }
+  .topbar h1 span { color: var(--dim); font-weight: 400; font-size: .85rem; margin-left: 8px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); flex-shrink: 0; }
+  .dot.on { background: var(--success); }
+  #statusText { font-size: .85rem; color: var(--dim); }
+
+  btn, button {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: .85rem;
+    font-family: var(--font);
+    background: var(--surface);
+    color: var(--text);
+    transition: background .15s, border-color .15s;
+  }
+  button:hover { background: #21262d; border-color: var(--accent); }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { background: #388bfd; }
+  button.danger  { border-color: var(--danger); color: var(--danger); }
+  button.danger:hover  { background: #3b0c0c; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── Nav breadcrumb ── */
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .nav .crumb {
+    color: var(--accent);
+    cursor: pointer;
+    font-size: .85rem;
+  }
+  .nav .crumb:hover { text-decoration: underline; }
+  .nav .sep { color: var(--dim); font-size: .75rem; }
+  .nav .spacer { flex: 1; }
+  .nav .nav-actions { display: flex; gap: 8px; }
+
+  /* ── Main body: file list + sidebar ── */
+  .body {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  /* ── File list ── */
+  .filelist {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: .85rem;
+  }
+  thead th {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    color: var(--dim);
+    font-weight: 500;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+  tbody tr { border-bottom: 1px solid #1c2128; }
+  tbody tr:hover { background: #161b22; }
+  tbody td { padding: 7px 12px; vertical-align: middle; }
+  .icon { font-size: 1rem; margin-right: 6px; }
+  .fname { color: var(--text); cursor: default; }
+  .fname.dir { color: var(--accent); cursor: pointer; }
+  .fname.dir:hover { text-decoration: underline; }
+  .fsize { color: var(--dim); white-space: nowrap; }
+  .actions { display: flex; gap: 6px; justify-content: flex-end; }
+  .actions button { padding: 3px 10px; font-size: .78rem; }
+
+  /* ── Drop zone / right panel ── */
+  .sidebar {
+    width: 260px;
+    border-left: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    flex-shrink: 0;
+    overflow: hidden;
+  }
+  .dropzone {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 20px;
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    margin: 12px;
+    color: var(--dim);
+    font-size: .85rem;
+    text-align: center;
+    transition: border-color .2s, background .2s;
+    cursor: default;
+  }
+  .dropzone.over { border-color: var(--primary); background: #1f2a3a; color: var(--accent); }
+  .dropzone .dicon { font-size: 2.5rem; }
+  .dropzone button { margin-top: 4px; }
+
+  /* ── Progress bar ── */
+  .progress-wrap {
+    padding: 10px 12px;
+    border-top: 1px solid var(--border);
+  }
+  .progress-label { font-size: .78rem; color: var(--dim); margin-bottom: 4px;
+                    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .progress-bar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--primary); border-radius: 3px;
+                   transition: width .1s; width: 0%; }
+
+  /* ── Log ── */
+  .logpanel {
+    height: 130px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+  }
+  .logtitle {
+    padding: 4px 12px;
+    font-size: .75rem;
+    color: var(--dim);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .logbody {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 12px;
+    font-family: var(--mono);
+    font-size: .75rem;
+    color: var(--dim);
+    background: #0a0e14;
+  }
+  .logbody .err  { color: var(--danger); }
+  .logbody .ok   { color: var(--success); }
+  .logbody .info { color: var(--accent); }
+
+  /* ── Empty / not-connected states ── */
+  .empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 200px;
+    gap: 10px;
+    color: var(--dim);
+    font-size: .9rem;
+  }
+  .empty .bigicon { font-size: 3rem; }
+
+  /* Dot entries (. and ..) */
+  .dotentry td { padding: 4px 12px; }
+  .dotentry .fname { opacity: .65; font-style: italic; }
+  .dimtag { color: var(--dim); font-size: .75rem; margin-left: 10px; font-style: normal; }
+  tbody tr.dotentry + tr.dotentry + tr td:first-child { border-top: 1px solid #1c2128; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<!-- ── Top bar ── -->
+<div class="topbar">
+  <h1>🎛 CYD MIDI File Transfer <span id="fwLabel"></span></h1>
+  <div class="dot" id="dot"></div>
+  <span id="statusText">Disconnected</span>
+  <button id="btnConnect" class="primary">Connect</button>
+</div>
+
+<!-- ── Breadcrumb nav ── -->
+<div class="nav">
+  <span class="crumb" id="crumbRoot" onclick="navigate('/')">SD Card</span>
+  <div id="crumbs" style="display:contents"></div>
+  <div class="spacer"></div>
+  <div class="nav-actions">
+    <button id="btnRefresh" onclick="loadDir(currentPath)" disabled>⟳ Refresh</button>
+    <button id="btnMkdir"   onclick="promptMkdir()"        disabled>+ Folder</button>
+  </div>
+</div>
+
+<!-- ── Body ── -->
+<div class="body">
+
+  <!-- File list -->
+  <div class="filelist" id="filelistArea">
+    <div class="empty">
+      <div class="bigicon">🔌</div>
+      <div>Connect to the CYD MIDI Controller</div>
+      <div style="font-size:.8rem">Put the device in  <b>FILES → USB XFER</b>  mode first</div>
+    </div>
+  </div>
+
+  <!-- Sidebar: drop zone + progress -->
+  <div class="sidebar">
+    <div class="dropzone" id="dropzone"
+         ondragover="onDragOver(event)"
+         ondragleave="onDragLeave(event)"
+         ondrop="onDrop(event)">
+      <div class="dicon">⬆</div>
+      <div>Drop files here<br>to upload to<br><span id="dropPath">/</span></div>
+      <input type="file" id="filePicker" multiple hidden onchange="onFilePick(event)">
+      <button onclick="document.getElementById('filePicker').click()" id="btnPick" disabled>
+        Choose files…
+      </button>
+    </div>
+
+    <div class="progress-wrap" id="progressWrap" style="display:none">
+      <div class="progress-label" id="progressLabel">Idle</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ── Log panel ── -->
+<div class="logpanel">
+  <div class="logtitle">
+    <span>Serial Log</span>
+    <button style="padding:2px 8px;font-size:.7rem" onclick="clearLog()">Clear</button>
+  </div>
+  <div class="logbody" id="logBody"></div>
+</div>
+
+<script>
+'use strict';
+
+// ─── Protocol layer ────────────────────────────────────────────────────────
+
+class CYDSerial {
+  constructor() {
+    this.port   = null;
+    this.reader = null;
+    this.writer = null;
+    this.buf    = new Uint8Array(0);   // byte buffer for incoming data
+    this.closed = false;
+    // Background read loop promise
+    this._readLoop = null;
+    // Queue of incoming bytes for protocol parser
+    this._incoming = [];
+    this._notify   = null;  // resolve fn waiting for more bytes
+  }
+
+  async connect(baudRate = 115200) {
+    this.port = await navigator.serial.requestPort();
+    await this.port.open({ baudRate, dataBits: 8, stopBits: 1, parity: 'none' });
+    this.reader = this.port.readable.getReader();
+    this.writer = this.port.writable.getWriter();
+    this.closed = false;
+    this._incoming = [];
+    this._readLoop = this._pump();
+  }
+
+  async disconnect() {
+    this.closed = true;
+    if (this.reader) { try { await this.reader.cancel(); } catch(_){} this.reader.releaseLock(); }
+    if (this.writer) { this.writer.releaseLock(); }
+    if (this.port)   { try { await this.port.close(); } catch(_){} }
+    this.reader = this.writer = this.port = null;
+  }
+
+  // Background pump — fills _incoming queue
+  async _pump() {
+    try {
+      while (!this.closed) {
+        const { value, done } = await this.reader.read();
+        if (done) break;
+        for (const b of value) this._incoming.push(b);
+        if (this._notify) { const f = this._notify; this._notify = null; f(); }
+      }
+    } catch(e) { if (!this.closed) throw e; }
+  }
+
+  // Wait until at least one byte is available
+  _waitBytes() {
+    if (this._incoming.length > 0) return Promise.resolve();
+    return new Promise(res => { this._notify = res; });
+  }
+
+  // Read one text line (\n terminated)
+  async readLine() {
+    const chars = [];
+    while (true) {
+      await this._waitBytes();
+      while (this._incoming.length) {
+        const b = this._incoming.shift();
+        if (b === 0x0A) return chars.join('').replace(/\r/g, '');
+        chars.push(String.fromCharCode(b));
+      }
+    }
+  }
+
+  // Read exactly n raw bytes (Uint8Array)
+  async readBytes(n, onProgress) {
+    const out = new Uint8Array(n);
+    let got = 0;
+    while (got < n) {
+      await this._waitBytes();
+      while (this._incoming.length && got < n) {
+        out[got++] = this._incoming.shift();
+        if (onProgress && got % 256 === 0) onProgress(got, n);
+      }
+    }
+    if (onProgress) onProgress(n, n);
+    return out;
+  }
+
+  // Send text command (adds \n)
+  async send(text) {
+    const enc = new TextEncoder().encode(text + '\n');
+    await this.writer.write(enc);
+  }
+
+  // Send raw bytes
+  async sendBytes(bytes) {
+    await this.writer.write(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes));
+  }
+}
+
+// ─── High-level protocol commands ──────────────────────────────────────────
+
+let serial = null;
+let connected = false;
+let currentPath = '/';
+const CHUNK = 256;
+
+async function doPing() {
+  await serial.send('FT:PING');
+  const r = await serial.readLine();
+  return r.startsWith('FT:PONG:') ? r.slice(8) : null;
+}
+
+async function doList(path) {
+  await serial.send('FT:LIST:' + path);
+  const files = [], dirs = [];
+  while (true) {
+    const line = await serial.readLine();
+    if (line === 'FT:OK') break;
+    if (line.startsWith('FT:ERR:')) throw new Error(line.slice(7));
+    if (line.startsWith('FT:F:')) {
+      // FT:F:/path/file.mid:12345  — size after last colon
+      const rest = line.slice(5);
+      const ci   = rest.lastIndexOf(':');
+      const name = rest.slice(0, ci);
+      const size = parseInt(rest.slice(ci + 1));
+      files.push({ name, size });
+    } else if (line.startsWith('FT:D:')) {
+      dirs.push({ name: line.slice(5) });
+    }
+  }
+  return { files, dirs };
+}
+
+async function doGet(path, onProgress) {
+  await serial.send('FT:GET:' + path);
+  const sizeLine = await serial.readLine();
+  if (sizeLine.startsWith('FT:ERR:')) throw new Error(sizeLine.slice(7));
+  if (!sizeLine.startsWith('FT:SIZE:')) throw new Error('Unexpected: ' + sizeLine);
+  const size = parseInt(sizeLine.slice(8));
+  const data = await serial.readBytes(size, onProgress);
+  const ok   = await serial.readLine();
+  if (ok !== 'FT:OK') throw new Error('Transfer error: ' + ok);
+  return data;
+}
+
+async function doPut(path, data, onProgress) {
+  await serial.send(`FT:PUT:${path}:${data.length}`);
+  const ready = await serial.readLine();
+  if (ready !== 'FT:READY') throw new Error('Not ready: ' + ready);
+
+  let sent = 0;
+  while (sent < data.length) {
+    const n     = Math.min(CHUNK, data.length - sent);
+    await serial.send(`FT:BLOCK:${n}`);
+    const go    = await serial.readLine();
+    if (go !== 'FT:GO') throw new Error('Protocol: ' + go);
+    await serial.sendBytes(data.slice(sent, sent + n));
+    const ack   = await serial.readLine();
+    if (!ack.startsWith('FT:ACK:')) throw new Error('No ACK: ' + ack);
+    sent += n;
+    if (onProgress) onProgress(sent, data.length);
+  }
+
+  await serial.send('FT:END');
+  const ok = await serial.readLine();
+  if (ok !== 'FT:OK') throw new Error('Finalize: ' + ok);
+}
+
+async function doDel(path) {
+  await serial.send('FT:DEL:' + path);
+  const r = await serial.readLine();
+  if (r.startsWith('FT:ERR:')) throw new Error(r.slice(7));
+  return r === 'FT:OK';
+}
+
+async function doMkdir(path) {
+  await serial.send('FT:MKDIR:' + path);
+  const r = await serial.readLine();
+  if (r.startsWith('FT:ERR:')) throw new Error(r.slice(7));
+  return r === 'FT:OK';
+}
+
+// ─── UI helpers ────────────────────────────────────────────────────────────
+
+function log(msg, cls) {
+  const el = document.getElementById('logBody');
+  const d  = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = new Date().toLocaleTimeString('en', {hour12:false}) + '  ' + msg;
+  el.appendChild(d);
+  el.scrollTop = el.scrollHeight;
+}
+function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+
+function fmt(bytes) {
+  if (bytes < 1024)       return bytes + ' B';
+  if (bytes < 1048576)    return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(2) + ' MB';
+}
+
+function setProgress(label, pct) {
+  const wrap = document.getElementById('progressWrap');
+  const fill = document.getElementById('progressFill');
+  const lbl  = document.getElementById('progressLabel');
+  wrap.style.display = '';
+  lbl.textContent    = label;
+  fill.style.width   = pct + '%';
+}
+function hideProgress() {
+  setTimeout(() => { document.getElementById('progressWrap').style.display = 'none'; }, 1200);
+}
+
+function setConnected(state, label) {
+  connected = state;
+  document.getElementById('dot').className        = 'dot' + (state ? ' on' : '');
+  document.getElementById('statusText').textContent = label;
+  document.getElementById('btnConnect').textContent  = state ? 'Disconnect' : 'Connect';
+  const en = state;
+  ['btnRefresh','btnMkdir','btnPick'].forEach(id => {
+    document.getElementById(id).disabled = !en;
+  });
+}
+
+// ─── Navigation ────────────────────────────────────────────────────────────
+
+async function navigate(path) {
+  currentPath = path;
+  document.getElementById('dropPath').textContent = path;
+  updateCrumbs(path);
+  await loadDir(path);
+}
+
+function updateCrumbs(path) {
+  const c = document.getElementById('crumbs');
+  c.innerHTML = '';
+  if (path === '/') return;
+  const parts = path.replace(/^\//, '').split('/').filter(Boolean);
+  let built = '';
+  for (const p of parts) {
+    built += '/' + p;
+    const sep  = document.createElement('span');
+    sep.className = 'sep';
+    sep.textContent = ' / ';
+    const crumb = document.createElement('span');
+    crumb.className = 'crumb';
+    crumb.textContent = p;
+    const cap = built;
+    crumb.onclick = () => navigate(cap);
+    c.appendChild(sep);
+    c.appendChild(crumb);
+  }
+}
+
+async function loadDir(path) {
+  if (!connected) return;
+  const area = document.getElementById('filelistArea');
+  area.innerHTML = '<div class="empty"><div>Loading…</div></div>';
+  try {
+    log('LIST ' + path, 'info');
+    const { files, dirs } = await doList(path);
+    renderListing(path, dirs, files);
+    log(`OK  ${dirs.length} dirs, ${files.length} files`, 'ok');
+  } catch(e) {
+    area.innerHTML = `<div class="empty"><div class="bigicon">⚠</div><div>${e.message}</div></div>`;
+    log('ERR LIST: ' + e.message, 'err');
+  }
+}
+
+function renderListing(path, dirs, files) {
+  // ── helpers ────────────────────────────────────────────────────────────
+  const baseName = n => n.split('/').filter(Boolean).pop() || n;
+
+  // Convert whatever the ESP32 sent into a guaranteed absolute path.
+  // Arduino-ESP32 >= 2.x sends the full path; older versions send the basename.
+  const absPath = name => {
+    if (name.startsWith('/')) return name;           // already absolute
+    const base = (path === '/') ? '' : path;
+    return base + '/' + name;
+  };
+
+  let rows = '';
+
+  // ── . (current directory — click to refresh) ─────────────────────────
+  rows += `<tr class="dotentry">
+    <td><span class="icon">📂</span>
+        <span class="fname dir" onclick="navigate('${escAttr(path)}')">.</span>
+        <span class="dimtag">${escHtml(path)}</span></td>
+    <td class="fsize"></td>
+    <td class="actions"></td></tr>`;
+
+  // ── .. (parent directory) ─────────────────────────────────────────────
+  if (path !== '/') {
+    const parent = path.split('/').slice(0, -1).join('/') || '/';
+    rows += `<tr class="dotentry">
+      <td><span class="icon">📂</span>
+          <span class="fname dir" onclick="navigate('${escAttr(parent)}')">..</span>
+          <span class="dimtag">${escHtml(parent)}</span></td>
+      <td class="fsize"></td>
+      <td class="actions"></td></tr>`;
+  }
+
+  // ── separator / empty notice ──────────────────────────────────────────
+  if (dirs.length === 0 && files.length === 0) {
+    rows += `<tr><td colspan="3"
+               style="text-align:center;color:var(--dim);padding:24px 0;font-style:italic">
+               Empty directory</td></tr>`;
+  }
+
+  // ── Subdirectories ────────────────────────────────────────────────────
+  for (const d of dirs) {
+    const full = absPath(d.name);   // guaranteed absolute path
+    const name = baseName(full);
+    rows += `<tr>
+      <td><span class="icon">📁</span>
+          <span class="fname dir" onclick="navigate('${escAttr(full)}')">${escHtml(name)}</span></td>
+      <td class="fsize"><span style="color:var(--dim);font-size:.75rem">folder</span></td>
+      <td class="actions">
+        <button class="danger" onclick="confirmDel('${escAttr(full)}','dir')">Delete</button>
+      </td></tr>`;
+  }
+
+  // ── Files ─────────────────────────────────────────────────────────────
+  for (const f of files) {
+    const full = absPath(f.name);   // guaranteed absolute path
+    const name = baseName(full);
+    const icon = fileIcon(name);
+    rows += `<tr>
+      <td><span class="icon">${icon}</span>
+          <span class="fname">${escHtml(name)}</span></td>
+      <td class="fsize">${fmt(f.size)}</td>
+      <td class="actions">
+        <button onclick="downloadFile('${escAttr(full)}','${escAttr(name)}')">⬇ Download</button>
+        <button class="danger" onclick="confirmDel('${escAttr(full)}','file')">Delete</button>
+      </td></tr>`;
+  }
+
+  document.getElementById('filelistArea').innerHTML =
+    `<table><thead><tr>
+       <th>Name</th><th>Size</th><th style="text-align:right">Actions</th>
+     </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// Return a suitable emoji icon for a given filename
+function fileIcon(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = {
+    mid: '🎵', midi: '🎵',
+    wav: '🎼', mp3: '🎶', ogg: '🎶', flac: '🎶',
+    syx: '🔧',
+    txt: '📄', log: '📄',
+    csv: '📊', json: '📋',
+  };
+  return map[ext] || '📄';
+}
+
+// ─── File operations ────────────────────────────────────────────────────────
+
+async function downloadFile(path, name) {
+  if (!connected) return;
+  log('GET ' + path, 'info');
+  try {
+    let rxBytes = 0, totalBytes = 0;
+    setProgress('Downloading  ' + name + '…', 0);
+    const data = await doGet(path, (rx, tot) => {
+      rxBytes = rx; totalBytes = tot;
+      setProgress(`⬇ ${name}  ${fmt(rx)} / ${fmt(tot)}`,
+                  Math.round((rx / tot) * 100));
+    });
+    // Trigger browser download
+    const blob = new Blob([data]);
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+    setProgress('✓ ' + name + ' (' + fmt(data.length) + ')', 100);
+    hideProgress();
+    log(`OK  GET ${path}  ${fmt(data.length)}`, 'ok');
+  } catch(e) {
+    setProgress('✗ Error: ' + e.message, 0);
+    hideProgress();
+    log('ERR GET: ' + e.message, 'err');
+  }
+}
+
+async function uploadFile(file) {
+  if (!connected) return;
+  const dest = (currentPath.endsWith('/') ? currentPath : currentPath + '/') + file.name;
+  log('PUT ' + dest + '  (' + fmt(file.size) + ')', 'info');
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    setProgress('⬆ ' + file.name + '…', 0);
+    await doPut(dest, buf, (sent, total) => {
+      setProgress(`⬆ ${file.name}  ${fmt(sent)} / ${fmt(total)}`,
+                  Math.round((sent / total) * 100));
+    });
+    setProgress('✓ ' + file.name + ' uploaded', 100);
+    hideProgress();
+    log('OK  PUT ' + dest, 'ok');
+    await loadDir(currentPath);
+  } catch(e) {
+    setProgress('✗ ' + e.message, 0);
+    hideProgress();
+    log('ERR PUT: ' + e.message, 'err');
+  }
+}
+
+async function confirmDel(path, type) {
+  if (!connected) return;
+  if (!confirm(`Delete ${type}:\n${path}\n\nThis cannot be undone.`)) return;
+  log('DEL ' + path, 'info');
+  try {
+    await doDel(path);
+    log('OK  DEL ' + path, 'ok');
+    await loadDir(currentPath);
+  } catch(e) {
+    log('ERR DEL: ' + e.message, 'err');
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+async function promptMkdir() {
+  if (!connected) return;
+  const name = prompt('New folder name:');
+  if (!name) return;
+  const full = (currentPath.endsWith('/') ? currentPath : currentPath + '/') + name;
+  log('MKDIR ' + full, 'info');
+  try {
+    await doMkdir(full);
+    log('OK  MKDIR ' + full, 'ok');
+    await loadDir(currentPath);
+  } catch(e) {
+    log('ERR MKDIR: ' + e.message, 'err');
+    alert('mkdir failed: ' + e.message);
+  }
+}
+
+// ─── Drag-and-drop ─────────────────────────────────────────────────────────
+
+function onDragOver(e) {
+  e.preventDefault();
+  if (connected) document.getElementById('dropzone').classList.add('over');
+}
+function onDragLeave(e) {
+  document.getElementById('dropzone').classList.remove('over');
+}
+async function onDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropzone').classList.remove('over');
+  if (!connected) return;
+  const files = [...e.dataTransfer.files];
+  for (const f of files) await uploadFile(f);
+}
+async function onFilePick(e) {
+  const files = [...e.target.files];
+  e.target.value = '';
+  for (const f of files) await uploadFile(f);
+}
+
+// ─── Connect / disconnect ───────────────────────────────────────────────────
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(s) { return s.replace(/'/g, "\\'"); }
+
+document.getElementById('btnConnect').onclick = async () => {
+  if (connected) {
+    // Disconnect
+    try { await serial.send('FT:EXIT'); await serial.readLine(); } catch(_){}
+    await serial.disconnect();
+    serial = null;
+    setConnected(false, 'Disconnected');
+    document.getElementById('filelistArea').innerHTML =
+      '<div class="empty"><div class="bigicon">🔌</div><div>Disconnected</div></div>';
+    log('Disconnected', 'info');
+    return;
+  }
+
+  if (!('serial' in navigator)) {
+    alert('Web Serial API not available.\n\nRequirements:\n' +
+          '• Chrome or Edge ≥ 89\n• Served over HTTPS or localhost\n' +
+          '• Run:  python3 -m http.server 8080\n  then open  http://localhost:8080/cyd_filetransfer.html');
+    return;
+  }
+
+  try {
+    serial = new CYDSerial();
+    setConnected(false, 'Connecting…');
+    log('Requesting serial port…', 'info');
+    await serial.connect(115200);
+    log('Port opened — sending PING…', 'info');
+
+    // Give device 500ms to wake up
+    await new Promise(r => setTimeout(r, 500));
+
+    const fw = await doPing();
+    if (!fw) throw new Error('PING failed — is device in USB XFER mode?');
+
+    setConnected(true, fw);
+    document.getElementById('fwLabel').textContent = fw;
+    log('Connected: ' + fw, 'ok');
+    await navigate('/');
+  } catch(e) {
+    if (serial) { try { await serial.disconnect(); } catch(_){} serial = null; }
+    setConnected(false, 'Connection failed');
+    log('ERR connect: ' + e.message, 'err');
+    alert('Connection failed:\n' + e.message);
+  }
+};
+
+// ─── Init ───────────────────────────────────────────────────────────────────
+log('CYD MIDI File Transfer — Web Serial Edition', 'info');
+log('Put device in  FILES → USB XFER  then click Connect', '');
+</script>
+</body>
+</html>
